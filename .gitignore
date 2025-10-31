@@ -45,4 +45,4 @@ keycloak-data/
 *.cert
 
 # React Native
-.expo/
+.expo/Screenshot/
