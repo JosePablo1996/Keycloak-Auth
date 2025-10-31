@@ -2,7 +2,7 @@ import * as React from 'react';
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { Alert } from 'react-native';
 
-// Interfaces ACTUALIZADAS - Incluye phone
+// Interfaces ACTUALIZADAS - Incluye phone y address
 interface UserInfo {
   sub?: string;
   preferred_username?: string;
@@ -11,7 +11,8 @@ interface UserInfo {
   email_verified?: boolean;
   family_name?: string;
   name?: string;
-  phone?: string; // ✅ NUEVO CAMPO AGREGADO
+  phone?: string;
+  address?: string; // ✅ NUEVO CAMPO AGREGADO
 }
 
 interface AuthState {
@@ -46,12 +47,13 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-// ✅ CONFIGURACIÓN CORREGIDA - Cliente Confidencial
+// ✅ CONFIGURACIÓN ACTUALIZADA - SCOPE INCLUYE ADDRESS
 const KEYCLOAK_CONFIG = {
   baseUrl: 'http://localhost:8080',
   realm: 'test-realm', 
-  clientId: 'react-client', // ✅ Cliente correcto
-  clientSecret: '5TNS3QssvRo6Xu7IVH9gadDhnGGt80bo'
+  clientId: 'react-client',
+  clientSecret: '5TNS3QssvRo6Xu7IVH9gadDhnGGt80bo',
+  scope: 'openid profile email phone address' // ✅ SCOPE ACTUALIZADO CON ADDRESS
 };
 
 // Función helper para fetch con timeout
@@ -114,7 +116,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
     }
   };
 
-  // Función para extraer información del usuario del token - ACTUALIZADA
+  // Función para extraer información del usuario del token - ACTUALIZADA CON ADDRESS
   const extractUserInfo = (idToken: string): UserInfo | null => {
     try {
       if (!idToken) {
@@ -143,14 +145,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
         family_name: decodedPayload.family_name || '',
         name: decodedPayload.name || 'Usuario',
         email_verified: decodedPayload.email_verified || false,
-        phone: decodedPayload.phone || '' // ✅ NUEVO CAMPO AGREGADO
+        phone: decodedPayload.phone || '',
+        address: decodedPayload.address || '' // ✅ NUEVO CAMPO AGREGADO
       };
 
       console.log('👤 UserInfo extraído del token:', {
         username: userInfo.preferred_username,
         email: userInfo.email,
         name: userInfo.name,
-        phone: userInfo.phone || 'No disponible' // ✅ LOG DEL TELÉFONO
+        phone: userInfo.phone || 'No disponible',
+        address: userInfo.address || 'No disponible' // ✅ LOG DE LA DIRECCIÓN
       });
       return userInfo;
 
@@ -184,7 +188,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
         username: userStr,
         clientId: KEYCLOAK_CONFIG.clientId,
         realm: KEYCLOAK_CONFIG.realm,
-        baseUrl: KEYCLOAK_CONFIG.baseUrl
+        baseUrl: KEYCLOAK_CONFIG.baseUrl,
+        scope: KEYCLOAK_CONFIG.scope
       });
 
       // ✅ ENDPOINT para token
@@ -211,11 +216,11 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
         client_secret: KEYCLOAK_CONFIG.clientSecret,
         username: userStr,
         password: passStr,
-        scope: 'openid profile email phone' // ✅ SCOPE ACTUALIZADO CON PHONE
+        scope: KEYCLOAK_CONFIG.scope
       });
 
       console.log('📤 Enviando credenciales al servidor...');
-      console.log('🎯 Scope solicitado:', 'openid profile email phone');
+      console.log('🎯 Scope solicitado:', KEYCLOAK_CONFIG.scope);
 
       const response = await fetchWithTimeout(tokenUrl, {
         method: 'POST',
@@ -238,7 +243,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
           const errorData = JSON.parse(errorText);
           console.log('🔍 Detalles del error:', errorData);
           
-          // Interpretar errores específicos de Keycloak
+          // ✅ MANEJO MEJORADO DE ERRORES - CORREGIDO PARA "Account is not fully set up"
           if (errorData.error === 'invalid_client') {
             errorMessage = 
               `❌ Error de configuración del cliente\n\n` +
@@ -251,7 +256,25 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
               `2. Clients → ${KEYCLOAK_CONFIG.clientId}\n` +
               `3. Verifica la configuración`;
           } else if (errorData.error === 'invalid_grant') {
-            errorMessage = '❌ Usuario o contraseña incorrectos';
+            // ✅ DIFERENCIAR ENTRE CREDENCIALES INCORRECTAS Y CUENTA NO CONFIGURADA
+            if (errorData.error_description?.includes('Account is not fully set up')) {
+              errorMessage = 
+                `❌ Cuenta no completamente configurada\n\n` +
+                `Tu cuenta requiere una configuración adicional antes de poder iniciar sesión.\n\n` +
+                `🔧 Posibles soluciones:\n` +
+                `• Verifica tu email y confirma tu cuenta\n` +
+                `• Contacta al administrador del sistema\n` +
+                `• La cuenta puede requerir verificación de email\n\n` +
+                `💡 Si eres el administrador:\n` +
+                `1. Ve a Keycloak Admin Console\n` +
+                `2. Users → Selecciona el usuario\n` +
+                `3. En Details → Email Verified = ON\n` +
+                `4. Required User Actions = Vacío`;
+            } else if (errorData.error_description?.includes('Invalid user credentials')) {
+              errorMessage = '❌ Usuario o contraseña incorrectos';
+            } else {
+              errorMessage = `❌ Error de autenticación: ${errorData.error_description || 'Credenciales inválidas'}`;
+            }
           } else if (errorData.error === 'unauthorized_client') {
             errorMessage = 
               `❌ Cliente no autorizado\n\n` +
@@ -260,10 +283,23 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
               `1. Clients → ${KEYCLOAK_CONFIG.clientId}\n` +
               `2. Settings → Direct Access Grants Enabled = ON\n` +
               `3. Guardar cambios`;
+          } else if (errorData.error === 'invalid_scope') {
+            errorMessage = 
+              `❌ Scope inválido\n\n` +
+              `El scope '${KEYCLOAK_CONFIG.scope}' no está configurado correctamente.\n\n` +
+              `Verifica en Keycloak:\n` +
+              `1. Client Scopes → address está asignado al cliente\n` +
+              `2. Mappers están configurados para address`;
+          } else if (errorData.error === 'invalid_request') {
+            errorMessage = 
+              `❌ Solicitud inválida\n\n` +
+              `La solicitud de autenticación contiene parámetros incorrectos.\n\n` +
+              `Verifica la configuración del cliente.`;
           } else {
             errorMessage = errorData.error_description || errorData.error || `Error ${response.status}`;
           }
         } catch (parseError) {
+          console.error('❌ Error parseando respuesta de error:', parseError);
           errorMessage = `Error ${response.status}: ${response.statusText}`;
         }
         
@@ -291,7 +327,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
 
       // ✅ ACTUALIZACIÓN CRÍTICA: Actualizar estado de autenticación
       const newAuthState = {
-        isAuthenticated: true, // ✅ ESTO DEBE SER TRUE
+        isAuthenticated: true,
         accessToken: authData.access_token,
         refreshToken: authData.refresh_token || null,
         userInfo
@@ -302,7 +338,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
         isAuthenticated: newAuthState.isAuthenticated,
         hasToken: !!newAuthState.accessToken,
         user: newAuthState.userInfo?.preferred_username,
-        phone: newAuthState.userInfo?.phone || 'No disponible' // ✅ LOG DEL TELÉFONO
+        phone: newAuthState.userInfo?.phone || 'No disponible',
+        address: newAuthState.userInfo?.address || 'No disponible'
       });
 
       // ✅ ACTUALIZAR EL ESTADO DE FORMA SÍNCRONA
@@ -330,11 +367,29 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
           `No se pudo conectar a Keycloak.\n\n` +
           `Verifica:\n` +
           `• Keycloak está corriendo en ${KEYCLOAK_CONFIG.baseUrl}\n` +
-          `• Puedes acceder a la URL desde tu navegador`;
+          `• Puedes acceder a la URL desde tu navegador\n` +
+          `• No hay problemas de red o firewall`;
       }
       
       setError(errorMessage);
-      Alert.alert('❌ Error de Autenticación', errorMessage);
+      
+      // ✅ MOSTRAR ALERTA ESPECÍFICA SEGÚN EL TIPO DE ERROR
+      if (errorMessage.includes('Cuenta no completamente configurada')) {
+        Alert.alert(
+          '❌ Cuenta No Configurada', 
+          errorMessage,
+          [
+            { text: 'Entendido', style: 'default' },
+            { 
+              text: 'Contactar Admin', 
+              style: 'cancel',
+              onPress: () => console.log('Contactar administrador')
+            }
+          ]
+        );
+      } else {
+        Alert.alert('❌ Error de Autenticación', errorMessage);
+      }
       
       // ✅ Asegurarse de que el estado de autenticación sea false en caso de error
       setAuthState({
@@ -418,15 +473,18 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }: { childr
       isAuthenticated: authState.isAuthenticated,
       user: authState.userInfo?.preferred_username || 'No user',
       hasToken: !!authState.accessToken,
-      phone: authState.userInfo?.phone || 'No disponible' // ✅ LOG DEL TELÉFONO
+      phone: authState.userInfo?.phone || 'No disponible',
+      address: authState.userInfo?.address || 'No disponible'
     });
 
     if (authState.isAuthenticated && authState.userInfo) {
       console.log('🔐 USUARIO AUTENTICADO CORRECTAMENTE:', {
         username: authState.userInfo.preferred_username,
         email: authState.userInfo.email,
-        phone: authState.userInfo.phone || 'No disponible', // ✅ LOG DEL TELÉFONO
-        hasToken: !!authState.accessToken
+        phone: authState.userInfo.phone || 'No disponible',
+        address: authState.userInfo.address || 'No disponible',
+        hasToken: !!authState.accessToken,
+        allFields: Object.keys(authState.userInfo)
       });
     }
   }, [authState.isAuthenticated, authState.userInfo, authState.accessToken]);

@@ -14,6 +14,7 @@ const {
   KEYCLOAK_ADMIN_USERNAME,
   KEYCLOAK_ADMIN_PASSWORD,
   KEYCLOAK_CLIENT_ID,
+  KEYCLOAK_CLIENT_SECRET,
   BACKEND_PORT
 } = process.env;
 
@@ -38,6 +39,7 @@ async function getAdminToken() {
         password: KEYCLOAK_ADMIN_PASSWORD,
         grant_type: 'password',
         client_id: KEYCLOAK_CLIENT_ID,
+        ...(KEYCLOAK_CLIENT_SECRET && { client_secret: KEYCLOAK_CLIENT_SECRET })
       }),
       {
         headers: {
@@ -71,13 +73,37 @@ app.get('/api/diagnostic', async (req, res) => {
     console.log('\n🩺 Ejecutando diagnóstico...');
     const token = await getAdminToken();
     
+    // Verificar configuración del realm
+    const realmResponse = await axios.get(
+      `${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      }
+    );
+
+    // Verificar client scopes
+    const scopesResponse = await axios.get(
+      `${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/client-scopes`,
+      {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      }
+    );
+
+    const addressScope = scopesResponse.data.find(scope => scope.name === 'address');
+    
     res.json({
       success: true,
       message: 'Conexión exitosa con Keycloak',
       keycloak: 'Conectado',
       realm: KEYCLOAK_REALM,
       canAuthenticate: true,
-      tokenLength: token.length
+      tokenLength: token.length,
+      addressScope: addressScope ? 'Configurado' : 'No encontrado',
+      realmName: realmResponse.data.displayName
     });
   } catch (error) {
     console.error('❌ Diagnóstico fallido:', error.message);
@@ -92,7 +118,7 @@ app.get('/api/diagnostic', async (req, res) => {
   }
 });
 
-// Endpoint para registrar usuario - ACTUALIZADO CON CAMPO ADDRESS
+// Endpoint para registrar usuario - MEJORADO
 app.post('/api/register', async (req, res) => {
   try {
     const { username, email, phone, fullName, address, password } = req.body;
@@ -100,13 +126,21 @@ app.post('/api/register', async (req, res) => {
     console.log('\n📝 Recibiendo solicitud de registro:');
     console.log('   Usuario:', username);
     console.log('   Email:', email);
-    console.log('   Dirección:', address); // NUEVO LOG
+    console.log('   Teléfono:', phone);
+    console.log('   Dirección:', address);
+    console.log('   Nombre completo:', fullName);
 
     // Validar campos requeridos
-    if (!username || !email || !fullName || !address || !password) {
+    const requiredFields = { username, email, fullName, address, password };
+    const missingFields = Object.entries(requiredFields)
+      .filter(([_, value]) => !value)
+      .map(([key]) => key);
+
+    if (missingFields.length > 0) {
       return res.status(400).json({
         success: false,
-        message: 'Todos los campos marcados con * son obligatorios'
+        message: 'Todos los campos marcados con * son obligatorios',
+        missingFields: missingFields
       });
     }
 
@@ -122,7 +156,7 @@ app.post('/api/register', async (req, res) => {
       emailVerified: false,
       attributes: {
         phone: phone || '',
-        address: address || '', // NUEVO CAMPO AGREGADO
+        address: address || '',
       },
       credentials: [
         {
@@ -131,12 +165,14 @@ app.post('/api/register', async (req, res) => {
           temporary: false,
         },
       ],
+      groups: [],
+      requiredActions: ['VERIFY_EMAIL'] // Opcional: requerir verificación de email
     };
 
     console.log('🔐 Creando usuario en Keycloak...');
     console.log('   Datos del usuario:', JSON.stringify(userData, null, 2));
     
-    const response = await axios.post(
+    const createResponse = await axios.post(
       `${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users`,
       userData,
       {
@@ -147,12 +183,49 @@ app.post('/api/register', async (req, res) => {
       }
     );
 
-    console.log('✅ Usuario creado exitosamente!');
+    // Obtener el ID del usuario creado
+    const userId = createResponse.headers.location?.split('/').pop();
+    console.log('✅ Usuario creado exitosamente! ID:', userId);
+
+    // Opcional: Asignar roles por defecto
+    try {
+      const defaultRole = await axios.get(
+        `${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/clients/${KEYCLOAK_CLIENT_ID}/roles/default-roles-${KEYCLOAK_REALM}`,
+        {
+          headers: {
+            'Authorization': `Bearer ${adminToken}`,
+          },
+        }
+      );
+
+      if (defaultRole.data) {
+        await axios.post(
+          `${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users/${userId}/role-mappings/clients/${KEYCLOAK_CLIENT_ID}`,
+          [defaultRole.data],
+          {
+            headers: {
+              'Authorization': `Bearer ${adminToken}`,
+              'Content-Type': 'application/json',
+            },
+          }
+        );
+        console.log('👤 Rol por defecto asignado al usuario');
+      }
+    } catch (roleError) {
+      console.log('⚠️ No se pudo asignar rol por defecto:', roleError.message);
+    }
     
     res.status(201).json({
       success: true,
       message: 'Usuario registrado exitosamente',
-      userId: response.headers.location?.split('/').pop(),
+      userId: userId,
+      userData: {
+        username,
+        email,
+        fullName,
+        phone,
+        address
+      }
     });
 
   } catch (error) {
@@ -171,34 +244,109 @@ app.post('/api/register', async (req, res) => {
     if (status === 401) {
       res.status(401).json({ success: false, message: 'Credenciales de administrador inválidas' });
     } else if (status === 409) {
-      res.status(409).json({ success: false, message: 'El usuario o email ya existe' });
+      res.status(409).json({ 
+        success: false, 
+        message: 'El usuario o email ya existe',
+        details: 'Por favor utiliza un nombre de usuario o email diferente'
+      });
     } else if (status === 403) {
-      res.status(403).json({ success: false, message: 'Sin permisos para crear usuarios' });
+      res.status(403).json({ 
+        success: false, 
+        message: 'Sin permisos para crear usuarios',
+        details: 'Verifica los permisos del cliente de administración'
+      });
     } else {
       res.status(500).json({ 
         success: false, 
         message: message,
-        details: 'Verifica que el campo address esté configurado en Keycloak'
+        details: 'Error interno del servidor. Verifica la configuración de Keycloak.'
       });
     }
   }
 });
 
-// Health check básico
-app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'OK', 
-    message: 'Backend funcionando',
-    timestamp: new Date().toISOString()
-  });
+// Nuevo endpoint para obtener información de usuario (útil para debugging)
+app.get('/api/user-info/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const adminToken = await getAdminToken();
+
+    const userResponse = await axios.get(
+      `${KEYCLOAK_URL}/admin/realms/${KEYCLOAK_REALM}/users/${userId}`,
+      {
+        headers: {
+          'Authorization': `Bearer ${adminToken}`,
+        },
+      }
+    );
+
+    res.json({
+      success: true,
+      user: userResponse.data
+    });
+
+  } catch (error) {
+    console.error('Error obteniendo información del usuario:', error.message);
+    res.status(500).json({
+      success: false,
+      message: 'Error obteniendo información del usuario',
+      error: error.message
+    });
+  }
+});
+
+// Health check mejorado
+app.get('/api/health', async (req, res) => {
+  try {
+    // Verificar conexión con Keycloak
+    await axios.get(`${KEYCLOAK_URL}/realms/${KEYCLOAK_REALM}/.well-known/openid-configuration`);
+    
+    res.json({ 
+      status: 'OK', 
+      message: 'Backend funcionando correctamente',
+      keycloak: 'Conectado',
+      timestamp: new Date().toISOString(),
+      version: '2.0.0'
+    });
+  } catch (error) {
+    res.status(500).json({ 
+      status: 'ERROR', 
+      message: 'Problema de conexión con Keycloak',
+      keycloak: 'Desconectado',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 // Nuevo endpoint para verificar configuración
 app.get('/api/config', (req, res) => {
   res.json({
     hasAddressField: true,
-    version: '1.1.0',
-    features: ['user-registration', 'address-field', 'keycloak-integration']
+    version: '2.0.0',
+    features: [
+      'user-registration', 
+      'address-field', 
+      'keycloak-integration',
+      'role-assignment',
+      'health-monitoring'
+    ],
+    requiredScopes: ['openid', 'profile', 'email', 'address', 'phone'],
+    supportedAttributes: ['phone', 'address']
+  });
+});
+
+// Middleware para manejar rutas no encontradas
+app.use('*', (req, res) => {
+  res.status(404).json({
+    success: false,
+    message: 'Endpoint no encontrado',
+    availableEndpoints: [
+      'GET  /api/health',
+      'GET  /api/diagnostic',
+      'GET  /api/config',
+      'POST /api/register',
+      'GET  /api/user-info/:userId'
+    ]
   });
 });
 
@@ -210,10 +358,14 @@ app.listen(BACKEND_PORT, () => {
   console.log(`   🔗 URL: http://localhost:${BACKEND_PORT}`);
   console.log('   =================================\n');
   console.log('📋 Endpoints disponibles:');
-  console.log('   GET  /api/health     - Health check básico');
-  console.log('   GET  /api/diagnostic - Diagnóstico Keycloak');
-  console.log('   GET  /api/config     - Configuración del backend');
-  console.log('   POST /api/register   - Registrar usuario (con dirección)');
+  console.log('   GET  /api/health          - Health check mejorado');
+  console.log('   GET  /api/diagnostic      - Diagnóstico completo Keycloak');
+  console.log('   GET  /api/config          - Configuración del backend');
+  console.log('   POST /api/register        - Registrar usuario (con dirección)');
+  console.log('   GET  /api/user-info/:id   - Obtener info de usuario');
   console.log('   =================================\n');
-  console.log('✅ Campo "address" habilitado en el registro');
+  console.log('✅ Campo "address" completamente habilitado');
+  console.log('🔍 Para probar el diagnóstico:');
+  console.log(`   curl http://localhost:${BACKEND_PORT}/api/diagnostic`);
+  console.log('   =================================\n');
 });
