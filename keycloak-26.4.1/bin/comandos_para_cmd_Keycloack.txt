@@ -1,0 +1,65 @@
+# Abrir CMD como administrador
+# Ejecutar estos comandos:
+
+cd C:\keycloak-26.4.1\bin
+
+usuario de administrador para keycloak :  http://localhost:8080/admin 
+
+. Usuario: admin
+
+.Contraseña: admin123
+
+Usuario de test-realm para keycloak : http://localhost:8080/realms/test-realm/account/
+
+.Usuario: jmtranda
+
+.Contraseña: clave123
+
+
+----client secret : SdVSDDybGSpDKSzJo0Kn6qUdAQpaGrkv----
+
+Endpoint OIDC Configuration: http://localhost:8080/realms/test-realm/.well-known/openid-configuration
+
+.Propósito: Configuración automática para aplicaciones
+
+Página Principal de Keycloak : http://localhost:8080/
+
+.Propósito: Página de inicio y acceso a diferentes realms
+
+
+🔐 URLs Específicas para tu Configuración:
+
+Para el Realm test-realm:
+
+🔧 Administración: http://localhost:8080/admin/master/console/#/test-realm
+👤 User Account: http://localhost:8080/realms/test-realm/account/
+🔗 OIDC Config: http://localhost:8080/realms/test-realm/.well-known/openid-configuration
+
+Para el Client react-client:
+
+.⚙️  Configuración: http://localhost:8080/admin/master/console/#/test-realm/clients/react-client
+
+🚀 Acceso Rápido desde PowerShell:
+
+# Abrir consola administrativa
+Start-Process "http://localhost:8080/admin"
+
+# Abrir página de cuenta para probar usuario
+Start-Process "http://localhost:8080/realms/test-realm/account/"
+
+# Ver configuración OIDC
+Start-Process "http://localhost:8080/realms/test-realm/.well-known/openid-configuration"
+
+📱 URLs para React Native (OAuth):
+
+📍 Authorization: http://localhost:8080/realms/test-realm/protocol/openid-connect/auth
+🔑 Token: http://localhost:8080/realms/test-realm/protocol/openid-connect/token
+👋 Logout: http://localhost:8080/realms/test-realm/protocol/openid-connect/logout
+📊 UserInfo: http://localhost:8080/realms/test-realm/protocol/openid-connect/userinfo
+
+⚠️ Si el Puerto 8080 está Ocupado:
+
+Si usaste un puerto diferente, reemplaza 8080 con tu puerto:
+
+http://localhost:9090/admin
+http://localhost:9090/realms/test-realm/account/

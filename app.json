@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "KeycloakSSOApp",
+    "slug": "KeycloakSSOApp",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
+    
+    // ✅ CONFIGURACIÓN MÍNIMA NECESARIA PARA KEYCLOAK
+    "scheme": "com.reactapp",
+    
+    "plugins": [
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "15.1"  // ✅ ACTUALIZADO a 15.1
+          },
+          "android": {
+            "compileSdkVersion": 34,
+            "targetSdkVersion": 34,
+            "buildToolsVersion": "34.0.0"
+          }
+        }
+      ]
+    ],
+    
+    "ios": {
+      "supportsTablet": true
+    },
+    
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      },
+      "edgeToEdgeEnabled": true
+    },
+    
+    "web": {
+      "favicon": "./assets/favicon.png"
+    }
+  }
+}
